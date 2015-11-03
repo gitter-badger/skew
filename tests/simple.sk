@@ -7205,5 +7205,98 @@ interface Foo {
       ~~~
 ")
 
+# Forbid named arguments in lambdas
+test("
+var foo = (x: bool) => {}
+", "
+<stdin>:1:13: error: Expected \",\" but found \":\"
+var foo = (x: bool) => {}
+            ^
+")
+
+# Test named argument checks
+test("
+class A { def x(y: int) int }
+class B : A { over x(y: int) int }
+
+class C { def x(y: int) int }
+class D : C { over x(z: int) int }
+
+class E { def x(y: int) int }
+class F : E { over x(y int) int }
+
+class G { def x(y int) int }
+class H : G { over x(y: int) int }
+
+class I {
+  def x(y: int) int
+  def x(z: int) int
+  def x(y int) int
+}
+", "
+<stdin>:5:22: error: Expected named argument \"z\" to use the name \"y\" from the other declaration of function \"x\"
+class D : C { over x(z: int) int }
+                     ^
+<stdin>:4:17: note: The other declaration is here
+class C { def x(y: int) int }
+                ^
+<stdin>:8:22: error: Argument \"y\" must have a \":\" after the name to match the other declaration of function \"x\"
+class F : E { over x(y int) int }
+                     ^
+<stdin>:7:17: note: The other declaration is here
+class E { def x(y: int) int }
+                ^
+<stdin>:10:17: error: Argument \"y\" must have a \":\" after the name to match the other declaration of function \"x\"
+class G { def x(y int) int }
+                ^
+<stdin>:11:22: note: The other declaration is here
+class H : G { over x(y: int) int }
+                     ^
+<stdin>:14:9: error: Expected named argument \"y\" to use the name \"z\" from the other declaration of function \"x\"
+  def x(y: int) int
+        ^
+<stdin>:15:9: note: The other declaration is here
+  def x(z: int) int
+        ^
+<stdin>:16:9: error: Argument \"y\" must have a \":\" after the name to match the other declaration of function \"x\"
+  def x(y int) int
+        ^
+<stdin>:14:9: note: The other declaration is here
+  def x(y: int) int
+        ^
+")
+
+# Test a demo of named argument usage
+test("
+class Property<T> {
+  var _value T
+  var _observers List<fn(T, T)> = []
+
+  def get T { return _value }
+  def set(value T) { set(value, silent: false) }
+  def set(value T, silent: bool) {
+    var old = _value
+    if old == value { return }
+    _value = value
+    if silent { return }
+    for observer in _observers { observer(old, value) }
+  }
+
+  def onChange(observer fn(T, T)) { _observers.appendOne(observer) }
+  def offChange(observer fn(T, T)) { _observers.removeOne(observer) }
+}
+
+def main {
+  var p = Property<int>.new(0)
+  p.set(p.get + 1)
+  p.set(p.get + 1, silent: true)
+  p.set(silent: true, p.get + 1)
+  p.set(true, silent: p.get + 1)
+  p.set(silent: p.get + 1, true)
+}
+", "
+TODO
+")
+
   }
 }

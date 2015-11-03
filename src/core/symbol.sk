@@ -95,6 +95,7 @@ namespace Skew {
     IS_FLAGS
     IS_GETTER
     IS_LOOP_VARIABLE
+    IS_NAMED
     IS_OVER
     IS_SETTER
     IS_VALUE_TYPE
@@ -153,6 +154,7 @@ namespace Skew {
     def isFlags bool                  { return .IS_FLAGS in flags }
     def isGetter bool                 { return .IS_GETTER in flags }
     def isLoopVariable bool           { return .IS_LOOP_VARIABLE in flags }
+    def isNamed bool                  { return .IS_NAMED in flags }
     def isOver bool                   { return .IS_OVER in flags }
     def isSetter bool                 { return .IS_SETTER in flags }
     def isValueType bool              { return .IS_VALUE_TYPE in flags }

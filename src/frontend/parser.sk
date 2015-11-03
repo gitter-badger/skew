@@ -165,7 +165,7 @@ namespace Skew.Parsing {
       var token = context.current
       if context.eat(.LEFT_PARENTHESIS) {
         var call = Node.createCall(value)
-        parseCommaSeparatedList(context, call, .RIGHT_PARENTHESIS)
+        parseArgumentList(context, call, .RIGHT_PARENTHESIS)
         value = call.withRange(context.spanSince(range)).withInternalRange(context.spanSince(token.range))
       }
 
@@ -700,6 +700,11 @@ namespace Skew.Parsing {
       var arg = VariableSymbol.new(.VARIABLE_ARGUMENT, range.toString)
       arg.range = range
 
+      # Parse named flag
+      if symbol.kind != .FUNCTION_LOCAL && context.eat(.COLON) {
+        arg.flags |= .IS_NAMED
+      }
+
       # Parse argument type
       if symbol.kind != .FUNCTION_LOCAL || (symbol.arguments.isEmpty ? peekType(context) : usingTypes) {
         arg.type = parseType(context)
@@ -1201,7 +1206,7 @@ namespace Skew.Parsing {
     }
   }
 
-  def parseCommaSeparatedList(context ParserContext, parent Node, stop TokenKind) {
+  def parseArgumentList(context ParserContext, parent Node, stop TokenKind) {
     var isFirst = true
     context.skipWhitespace
     while !context.eat(stop) {
@@ -1210,6 +1215,14 @@ namespace Skew.Parsing {
         break
       }
       var value = expressionParser.parse(context, .LOWEST)
+      if value.kind == .NAME && context.eat(.COLON) {
+        var after = expressionParser.parse(context, .LOWEST)
+        if after == null {
+          scanForToken(context, stop)
+          break
+        }
+        value = Node.createPair(value, after).withRange(context.spanSince(value.range))
+      }
       parent.appendChild(value)
       context.skipWhitespace
       isFirst = false
@@ -1614,7 +1627,7 @@ namespace Skew.Parsing {
     pratt.parselet(.LEFT_PARENTHESIS, .UNARY_POSTFIX).infix = (context, left) => {
       var node = Node.createCall(left)
       var token = context.next
-      parseCommaSeparatedList(context, node, .RIGHT_PARENTHESIS)
+      parseArgumentList(context, node, .RIGHT_PARENTHESIS)
       return node.withRange(context.spanSince(left.range)).withInternalRange(context.spanSince(token.range))
     }
 

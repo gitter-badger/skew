@@ -608,5 +608,16 @@ namespace Skew {
     def semanticErrorTooManyFlags(range Range, name string) {
       error(range, "The type \"\(name)\" cannot have more than 32 flags")
     }
+
+    def semanticErrorNamedArgumentMismatch(range Range, name string, other Range, otherName string, functionName string) {
+      if name != otherName {
+        error(range, "Expected named argument \"" + name + "\" to use the name \"" + otherName + "\" from the other declaration of function \"" + functionName + "\"")
+      } else {
+        error(range, "Argument \"" + name + "\" must have a \":\" after the name to match the other declaration of function \"" + functionName + "\"")
+      }
+      if other != null {
+        note(other, "The other declaration is here")
+      }
+    }
   }
 }

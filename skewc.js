@@ -8734,32 +8734,33 @@
     IS_FLAGS: 4,
     IS_GETTER: 8,
     IS_LOOP_VARIABLE: 16,
-    IS_OVER: 32,
-    IS_SETTER: 64,
-    IS_VALUE_TYPE: 128,
-    SHOULD_INFER_RETURN_TYPE: 256,
+    IS_NAMED: 32,
+    IS_OVER: 64,
+    IS_SETTER: 128,
+    IS_VALUE_TYPE: 256,
+    SHOULD_INFER_RETURN_TYPE: 512,
 
     // Modifiers
-    IS_DEPRECATED: 512,
-    IS_ENTRY_POINT: 1024,
-    IS_EXPORTED: 2048,
-    IS_IMPORTED: 4096,
-    IS_INLINING_FORCED: 8192,
-    IS_INLINING_PREVENTED: 16384,
-    IS_PREFERRED: 32768,
-    IS_PROTECTED: 65536,
-    IS_RENAMED: 131072,
-    IS_SKIPPED: 262144,
-    SHOULD_SPREAD: 524288,
+    IS_DEPRECATED: 1024,
+    IS_ENTRY_POINT: 2048,
+    IS_EXPORTED: 4096,
+    IS_IMPORTED: 8192,
+    IS_INLINING_FORCED: 16384,
+    IS_INLINING_PREVENTED: 32768,
+    IS_PREFERRED: 65536,
+    IS_PROTECTED: 131072,
+    IS_RENAMED: 262144,
+    IS_SKIPPED: 524288,
+    SHOULD_SPREAD: 1048576,
 
     // Pass-specific
-    IS_CSHARP_CONST: 1048576,
-    IS_DYNAMIC_LAMBDA: 2097152,
-    IS_GUARD_CONDITIONAL: 4194304,
-    IS_OBSOLETE: 8388608,
-    IS_PRIMARY_CONSTRUCTOR: 16777216,
-    IS_VIRTUAL: 33554432,
-    USE_PROTOTYPE_CACHE: 67108864
+    IS_CSHARP_CONST: 2097152,
+    IS_DYNAMIC_LAMBDA: 4194304,
+    IS_GUARD_CONDITIONAL: 8388608,
+    IS_OBSOLETE: 16777216,
+    IS_PRIMARY_CONSTRUCTOR: 33554432,
+    IS_VIRTUAL: 67108864,
+    USE_PROTOTYPE_CACHE: 134217728
   };
 
   Skew.Symbol = function(kind, name) {
@@ -8806,6 +8807,10 @@
 
   Skew.Symbol.prototype.isLoopVariable = function() {
     return (Skew.SymbolFlags.IS_LOOP_VARIABLE & this.flags) != 0;
+  };
+
+  Skew.Symbol.prototype.isNamed = function() {
+    return (Skew.SymbolFlags.IS_NAMED & this.flags) != 0;
   };
 
   Skew.Symbol.prototype.isOver = function() {
@@ -9886,6 +9891,20 @@
     this.error(range, 'The type "' + name + '" cannot have more than 32 flags');
   };
 
+  Skew.Log.prototype.semanticErrorNamedArgumentMismatch = function(range, name, other, otherName, functionName) {
+    if (name != otherName) {
+      this.error(range, 'Expected named argument "' + name + '" to use the name "' + otherName + '" from the other declaration of function "' + functionName + '"');
+    }
+
+    else {
+      this.error(range, 'Argument "' + name + '" must have a ":" after the name to match the other declaration of function "' + functionName + '"');
+    }
+
+    if (other != null) {
+      this.note(other, 'The other declaration is here');
+    }
+  };
+
   Skew.Log.prototype.commandLineErrorExpectedDefineValue = function(range, name) {
     this.error(range, 'Use "--define:' + name + '=___" to provide a value');
   };
@@ -10133,7 +10152,7 @@
 
       if (context.eat(Skew.TokenKind.LEFT_PARENTHESIS)) {
         var call = Skew.Node.createCall(value);
-        Skew.Parsing.parseCommaSeparatedList(context, call, Skew.TokenKind.RIGHT_PARENTHESIS);
+        Skew.Parsing.parseArgumentList(context, call, Skew.TokenKind.RIGHT_PARENTHESIS);
         value = call.withRange(context.spanSince(range)).withInternalRange(context.spanSince(token.range));
       }
 
@@ -10742,6 +10761,11 @@
       var arg = new Skew.VariableSymbol(Skew.SymbolKind.VARIABLE_ARGUMENT, range.toString());
       arg.range = range;
 
+      // Parse named flag
+      if (symbol.kind != Skew.SymbolKind.FUNCTION_LOCAL && context.eat(Skew.TokenKind.COLON)) {
+        arg.flags |= Skew.SymbolFlags.IS_NAMED;
+      }
+
       // Parse argument type
       if (symbol.kind != Skew.SymbolKind.FUNCTION_LOCAL || (symbol.$arguments.length == 0 ? Skew.Parsing.peekType(context) : usingTypes)) {
         arg.type = Skew.Parsing.typeParser.parse(context, Skew.Precedence.LOWEST);
@@ -11200,7 +11224,7 @@
     }
   };
 
-  Skew.Parsing.parseCommaSeparatedList = function(context, parent, stop) {
+  Skew.Parsing.parseArgumentList = function(context, parent, stop) {
     var isFirst = true;
     context.skipWhitespace();
 
@@ -11211,6 +11235,18 @@
       }
 
       var value = Skew.Parsing.expressionParser.parse(context, Skew.Precedence.LOWEST);
+
+      if (value.kind == Skew.NodeKind.NAME && context.eat(Skew.TokenKind.COLON)) {
+        var after = Skew.Parsing.expressionParser.parse(context, Skew.Precedence.LOWEST);
+
+        if (after == null) {
+          Skew.Parsing.scanForToken(context, stop);
+          break;
+        }
+
+        value = Skew.Node.createPair(value, after).withRange(context.spanSince(value.range));
+      }
+
       parent.appendChild(value);
       context.skipWhitespace();
       isFirst = false;
@@ -11585,7 +11621,7 @@
     pratt.parselet(Skew.TokenKind.LEFT_PARENTHESIS, Skew.Precedence.UNARY_POSTFIX).infix = function(context, left) {
       var node = Skew.Node.createCall(left);
       var token = context.next();
-      Skew.Parsing.parseCommaSeparatedList(context, node, Skew.TokenKind.RIGHT_PARENTHESIS);
+      Skew.Parsing.parseArgumentList(context, node, Skew.TokenKind.RIGHT_PARENTHESIS);
       return node.withRange(context.spanSince(left.range)).withInternalRange(context.spanSince(token.range));
     };
 
@@ -16780,14 +16816,34 @@
       }
 
       // Keep "other"
-      else if ($function.parent == parent && other.parent == parent) {
-        other.flags |= other.block != null ? $function.flags & ~Skew.SymbolFlags.IS_IMPORTED : $function.flags;
-        other.mergeInformationFrom($function);
-        $function.flags |= Skew.SymbolFlags.IS_OBSOLETE;
-      }
+      else {
+        if ($function.parent == parent && other.parent == parent) {
+          other.flags |= other.block != null ? $function.flags & ~Skew.SymbolFlags.IS_IMPORTED : $function.flags;
+          other.mergeInformationFrom($function);
+          $function.flags |= Skew.SymbolFlags.IS_OBSOLETE;
+        }
 
-      else if (!isFromSameObject) {
-        other.overridden = $function;
+        else if (!isFromSameObject) {
+          other.overridden = $function;
+        }
+
+        // Check for identical named argument state
+        for (var j1 = 0, count1 = other.$arguments.length; j1 < count1; j1 = j1 + 1 | 0) {
+          var a = in_List.get(other.$arguments, j1);
+          var b = in_List.get($function.$arguments, j1);
+          var isNamedA = a.isNamed();
+          var isNamedB = b.isNamed();
+
+          if (isNamedA != isNamedB || isNamedA && isNamedB && a.name != b.name) {
+            if (isNamedA && !isNamedB) {
+              var swap = a;
+              a = b;
+              b = swap;
+            }
+
+            this._log.semanticErrorNamedArgumentMismatch(a.range, a.name, b.range, b.name, $function.name);
+          }
+        }
       }
 
       // Remove the symbol after the merge
@@ -17349,6 +17405,8 @@
   };
 
   Skew.Resolving.Resolver.prototype._resolvePair = function(node, scope, context) {
+    assert(node.parent().kind == Skew.NodeKind.CALL || node.parent().kind == Skew.NodeKind.FOREACH || node.parent().kind == Skew.NodeKind.INITIALIZER_MAP);
+
     // Allow resolving a pair with a type context of "dynamic" to
     // deliberately silence errors around needing type context
     if (context == Skew.Type.DYNAMIC) {
@@ -17357,8 +17415,23 @@
       return;
     }
 
-    this._resolveAsParameterizedExpression(node.firstValue(), scope);
+    var isNamedArgument = node.parent().kind == Skew.NodeKind.CALL;
+
+    // Don't look up named argument names as variables
+    if (isNamedArgument) {
+      node.firstValue().resolvedType = Skew.Type.DYNAMIC;
+    }
+
+    else {
+      this._resolveAsParameterizedExpression(node.firstValue(), scope);
+    }
+
     this._resolveAsParameterizedExpression(node.secondValue(), scope);
+
+    // Named arguments are just a label
+    if (isNamedArgument) {
+      node.resolvedType = node.secondValue().resolvedType;
+    }
   };
 
   Skew.Resolving.Resolver.prototype._resolveJump = function(node, scope) {
@@ -17672,6 +17745,16 @@
     this._resolveBlock(node.whileBlock(), new Skew.LocalScope(scope, Skew.LocalType.LOOP));
   };
 
+  Skew.Resolving.Resolver.prototype._secondValueOf = function(node) {
+    if (node.kind == Skew.NodeKind.PAIR) {
+      var second = node.secondValue();
+      node.replaceWith(second.remove());
+      node = second;
+    }
+
+    return node;
+  };
+
   Skew.Resolving.Resolver.prototype._resolveCall = function(node, scope, context) {
     var hook = this._sinkNullDotIntoHook(node, scope, context);
 
@@ -17742,6 +17825,7 @@
     // If there was an error, resolve the arguments to check for further
     // errors but use a dynamic type context to avoid introducing errors
     for (var child1 = value.nextSibling(); child1 != null; child1 = child1.nextSibling()) {
+      child1 = this._secondValueOf(child1);
       this._resolveAsParameterizedExpressionWithConversion(child1, scope, Skew.Type.DYNAMIC);
     }
   };

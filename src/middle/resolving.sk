@@ -1247,6 +1247,22 @@ namespace Skew.Resolving {
           } else if !isFromSameObject {
             other.overridden = function
           }
+
+          # Check for identical named argument state
+          for j in 0..other.arguments.count {
+            var a = other.arguments[j]
+            var b = function.arguments[j]
+            var isNamedA = a.isNamed
+            var isNamedB = b.isNamed
+            if isNamedA != isNamedB || isNamedA && isNamedB && a.name != b.name {
+              if isNamedA && !isNamedB {
+                var swap = a
+                a = b
+                b = swap
+              }
+              _log.semanticErrorNamedArgumentMismatch(a.range, a.name, b.range, b.name, function.name)
+            }
+          }
         }
 
         # Remove the symbol after the merge
@@ -1599,6 +1615,11 @@ namespace Skew.Resolving {
     }
 
     def _resolvePair(node Node, scope Scope, context Type) {
+      assert(
+        node.parent.kind == .CALL ||
+        node.parent.kind == .FOREACH ||
+        node.parent.kind == .INITIALIZER_MAP)
+
       # Allow resolving a pair with a type context of "dynamic" to
       # deliberately silence errors around needing type context
       if context == .DYNAMIC {
@@ -1607,8 +1628,21 @@ namespace Skew.Resolving {
         return
       }
 
-      _resolveAsParameterizedExpression(node.firstValue, scope)
+      var isNamedArgument = node.parent.kind == .CALL
+
+      # Don't look up named argument names as variables
+      if isNamedArgument {
+        node.firstValue.resolvedType = .DYNAMIC
+      } else {
+        _resolveAsParameterizedExpression(node.firstValue, scope)
+      }
+
       _resolveAsParameterizedExpression(node.secondValue, scope)
+
+      # Named arguments are just a label
+      if isNamedArgument {
+        node.resolvedType = node.secondValue.resolvedType
+      }
     }
 
     def _resolveJump(node Node, scope Scope) {
@@ -1903,6 +1937,15 @@ namespace Skew.Resolving {
       _resolveBlock(node.whileBlock, LocalScope.new(scope, .LOOP))
     }
 
+    def _secondValueOf(node Node) Node {
+      if node.kind == .PAIR {
+        var second = node.secondValue
+        node.replaceWith(second.remove)
+        node = second
+      }
+      return node
+    }
+
     def _resolveCall(node Node, scope Scope, context Type) {
       var hook = _sinkNullDotIntoHook(node, scope, context)
       if hook != null {
@@ -1967,6 +2010,7 @@ namespace Skew.Resolving {
       # If there was an error, resolve the arguments to check for further
       # errors but use a dynamic type context to avoid introducing errors
       for child = value.nextSibling; child != null; child = child.nextSibling {
+        child = _secondValueOf(child)
         _resolveAsParameterizedExpressionWithConversion(child, scope, .DYNAMIC)
       }
     }
