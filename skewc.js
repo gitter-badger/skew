@@ -9381,11 +9381,15 @@
   };
 
   Skew.Log.prototype.syntaxErrorOptionalArgument = function(range) {
-    this.error(range, "Optional arguments aren't supported yet");
+    this.error(range, "Optional arguments aren't supported for lambdas");
   };
 
   Skew.Log.prototype.syntaxErrorUnnamedArgument = function(range) {
     this.error(range, 'Unnamed arguments cannot come after named arguments');
+  };
+
+  Skew.Log.prototype.syntaxErrorDefaultValue = function(range) {
+    this.error(range, 'Only named arguments can have default values (add a ":" after the argument name)');
   };
 
   Skew.Log._expectedCountText = function(singular, expected, found) {
@@ -10766,10 +10770,11 @@
       var arg = new Skew.VariableSymbol(Skew.SymbolKind.VARIABLE_ARGUMENT, range.toString());
       arg.range = range;
 
-      // Parse named flag
-      if (symbol.kind != Skew.SymbolKind.FUNCTION_LOCAL && context.eat(Skew.TokenKind.COLON)) {
+      // Parse a named argument but don't allow a space between the name and the colon
+      if (symbol.kind != Skew.SymbolKind.FUNCTION_LOCAL && context.peek(Skew.TokenKind.COLON) && context.current().range.start == range.end) {
         arg.flags |= Skew.SymbolFlags.IS_NAMED;
         hasNamedArguments = true;
+        context.next();
       }
 
       else if (hasNamedArguments) {
@@ -10782,12 +10787,27 @@
         usingTypes = true;
       }
 
-      // Optional arguments aren't supported yet
       var assign = context.current().range;
 
       if (context.eat(Skew.TokenKind.ASSIGN)) {
-        Skew.Parsing.expressionParser.parse(context, Skew.Precedence.LOWEST);
-        context.log.syntaxErrorOptionalArgument(context.spanSince(assign));
+        // Optional arguments aren't supported inside lambdas
+        if (symbol.kind == Skew.SymbolKind.FUNCTION_LOCAL) {
+          Skew.Parsing.expressionParser.parse(context, Skew.Precedence.LOWEST);
+          context.log.syntaxErrorOptionalArgument(context.spanSince(assign));
+        }
+
+        // Parse default value
+        else {
+          arg.value = Skew.Parsing.expressionParser.parse(context, Skew.Precedence.LOWEST);
+
+          if (arg.value == null) {
+            return false;
+          }
+
+          if (!arg.isNamed()) {
+            context.log.syntaxErrorDefaultValue(range);
+          }
+        }
       }
 
       symbol.$arguments.push(arg);
@@ -11247,7 +11267,9 @@
 
       var value = Skew.Parsing.expressionParser.parse(context, Skew.Precedence.LOWEST);
 
-      if (value.kind == Skew.NodeKind.NAME && context.eat(Skew.TokenKind.COLON)) {
+      // Parse a named argument but don't allow a space between the name and the colon
+      if (value.kind == Skew.NodeKind.NAME && context.peek(Skew.TokenKind.COLON) && context.current().range.start == value.range.end) {
+        context.next();
         var after = Skew.Parsing.expressionParser.parse(context, Skew.Precedence.LOWEST);
 
         if (after == null) {
@@ -17771,6 +17793,12 @@
     return node;
   };
 
+  Skew.Resolving.Resolver.prototype._stripFirstPairValues = function(node) {
+    for (var child = node.firstChild(); child != null; child = child.nextSibling()) {
+      child = this._secondValueOf(child);
+    }
+  };
+
   Skew.Resolving.Resolver.prototype._resolveCall = function(node, scope, context) {
     var hook = this._sinkNullDotIntoHook(node, scope, context);
 
@@ -17869,6 +17897,7 @@
         this._log.semanticErrorGetterCalledTwice(node.parent().internalRangeOrRange(), symbol.name, symbol.range);
       }
 
+      this._stripFirstPairValues(node);
       this._resolveChildrenAsParameterizedExpressionsWithDynamicTypeContext(node, scope);
       return false;
     }
@@ -17914,6 +17943,7 @@
     // Check argument count
     if (expected != count) {
       this._log.semanticErrorArgumentCount(node.internalRangeOrRange(), expected, count, $function != null ? $function.name : null, $function != null ? $function.range : null);
+      this._stripFirstPairValues(node);
       this._resolveChildrenAsParameterizedExpressionsWithDynamicTypeContext(node, scope);
       return false;
     }
@@ -17924,6 +17954,7 @@
 
     for (var i = 0, list = type.argumentTypes, count1 = list.length; i < count1; i = i + 1 | 0) {
       var argumentType = in_List.get(list, i);
+      child = this._secondValueOf(child);
       this._resolveAsParameterizedExpressionWithConversion(child, scope, argumentType);
       child = child.nextSibling();
     }

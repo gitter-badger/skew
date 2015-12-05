@@ -5870,20 +5870,20 @@ class Baz : Bar {
            ~~~~~
 ")
 
-# Forbid default values in function arguments
+# Allow default values in function arguments
 test("
 def foo(x bool = true) {}
 ", "
-<stdin>:1:16: error: Optional arguments aren't supported yet
+<stdin>:1:9: error: Only named arguments can have default values (add a \":\" after the argument name)
 def foo(x bool = true) {}
-               ~~~~~~
+        ^
 ")
 
-# Forbid default values in function arguments
+# Forbid default values in lambda arguments
 test("
 var foo = (x bool = true) => {}
 ", "
-<stdin>:1:19: error: Optional arguments aren't supported yet
+<stdin>:1:19: error: Optional arguments aren't supported for lambdas
 var foo = (x bool = true) => {}
                   ~~~~~~
 ")
@@ -7233,6 +7233,36 @@ def foo {
 <stdin>:2:21: error: Unnamed arguments cannot come after named arguments
   dynamic.foo(a: b, c)
                     ^
+<stdin>:2:18: error: \"b\" is not declared
+  dynamic.foo(a: b, c)
+                 ^
+<stdin>:2:21: error: \"c\" is not declared
+  dynamic.foo(a: b, c)
+                    ^
+")
+
+# Forbid a space inside a named argument
+test("
+def foo(a : int) {
+}
+", "
+<stdin>:1:11: error: Unexpected \":\"
+def foo(a : int) {
+          ^
+")
+
+# Forbid a space inside a named argument
+test("
+def foo {
+  dynamic.foo(a : b)
+}
+", "
+<stdin>:2:17: error: Expected \",\" but found \":\"
+  dynamic.foo(a : b)
+                ^
+<stdin>:2:15: error: \"a\" is not declared
+  dynamic.foo(a : b)
+              ^
 ")
 
 # Test named argument checks

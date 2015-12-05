@@ -702,10 +702,11 @@ namespace Skew.Parsing {
       var arg = VariableSymbol.new(.VARIABLE_ARGUMENT, range.toString)
       arg.range = range
 
-      # Parse named flag
-      if symbol.kind != .FUNCTION_LOCAL && context.eat(.COLON) {
+      # Parse a named argument but don't allow a space between the name and the colon
+      if symbol.kind != .FUNCTION_LOCAL && context.peek(.COLON) && context.current.range.start == range.end {
         arg.flags |= .IS_NAMED
         hasNamedArguments = true
+        context.next
       } else if hasNamedArguments {
         context.log.syntaxErrorUnnamedArgument(range)
       }
@@ -716,11 +717,25 @@ namespace Skew.Parsing {
         usingTypes = true
       }
 
-      # Optional arguments aren't supported yet
       var assign = context.current.range
       if context.eat(.ASSIGN) {
-        expressionParser.parse(context, .LOWEST)
-        context.log.syntaxErrorOptionalArgument(context.spanSince(assign))
+
+        # Optional arguments aren't supported inside lambdas
+        if symbol.kind == .FUNCTION_LOCAL {
+          expressionParser.parse(context, .LOWEST)
+          context.log.syntaxErrorOptionalArgument(context.spanSince(assign))
+        }
+
+        # Parse default value
+        else {
+          arg.value = expressionParser.parse(context, .LOWEST)
+          if arg.value == null {
+            return false
+          }
+          if !arg.isNamed {
+            context.log.syntaxErrorDefaultValue(range)
+          }
+        }
       }
 
       symbol.arguments.append(arg)
@@ -1224,7 +1239,9 @@ namespace Skew.Parsing {
       }
       var value = expressionParser.parse(context, .LOWEST)
 
-      if value.kind == .NAME && context.eat(.COLON) {
+      # Parse a named argument but don't allow a space between the name and the colon
+      if value.kind == .NAME && context.peek(.COLON) && context.current.range.start == value.range.end {
+        context.next
         var after = expressionParser.parse(context, .LOWEST)
         if after == null {
           scanForToken(context, stop)

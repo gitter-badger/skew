@@ -1946,6 +1946,12 @@ namespace Skew.Resolving {
       return node
     }
 
+    def _stripFirstPairValues(node Node) {
+      for child = node.firstChild; child != null; child = child.nextSibling {
+        child = _secondValueOf(child)
+      }
+    }
+
     def _resolveCall(node Node, scope Scope, context Type) {
       var hook = _sinkNullDotIntoHook(node, scope, context)
       if hook != null {
@@ -2035,6 +2041,7 @@ namespace Skew.Resolving {
         } else {
           _log.semanticErrorGetterCalledTwice(node.parent.internalRangeOrRange, symbol.name, symbol.range)
         }
+        _stripFirstPairValues(node)
         _resolveChildrenAsParameterizedExpressionsWithDynamicTypeContext(node, scope)
         return false
       }
@@ -2077,6 +2084,7 @@ namespace Skew.Resolving {
       # Check argument count
       if expected != count {
         _log.semanticErrorArgumentCount(node.internalRangeOrRange, expected, count, function?.name, function?.range)
+        _stripFirstPairValues(node)
         _resolveChildrenAsParameterizedExpressionsWithDynamicTypeContext(node, scope)
         return false
       }
@@ -2085,6 +2093,7 @@ namespace Skew.Resolving {
       var value = node.firstChild
       var child = value.nextSibling
       for argumentType in type.argumentTypes {
+        child = _secondValueOf(child)
         _resolveAsParameterizedExpressionWithConversion(child, scope, argumentType)
         child = child.nextSibling
       }
