@@ -9384,6 +9384,10 @@
     this.error(range, "Optional arguments aren't supported yet");
   };
 
+  Skew.Log.prototype.syntaxErrorUnnamedArgument = function(range) {
+    this.error(range, 'Unnamed arguments cannot come after named arguments');
+  };
+
   Skew.Log._expectedCountText = function(singular, expected, found) {
     return 'Expected ' + Skew.PrettyPrint.plural1(expected, singular) + ' but found ' + Skew.PrettyPrint.plural1(found, singular);
   };
@@ -10745,6 +10749,7 @@
 
   Skew.Parsing.parseFunctionArguments = function(context, symbol) {
     var usingTypes = false;
+    var hasNamedArguments = false;
 
     while (!context.eat(Skew.TokenKind.RIGHT_PARENTHESIS)) {
       if (!(symbol.$arguments.length == 0) && !context.expect(Skew.TokenKind.COMMA)) {
@@ -10764,6 +10769,11 @@
       // Parse named flag
       if (symbol.kind != Skew.SymbolKind.FUNCTION_LOCAL && context.eat(Skew.TokenKind.COLON)) {
         arg.flags |= Skew.SymbolFlags.IS_NAMED;
+        hasNamedArguments = true;
+      }
+
+      else if (hasNamedArguments) {
+        context.log.syntaxErrorUnnamedArgument(range);
       }
 
       // Parse argument type
@@ -11226,6 +11236,7 @@
 
   Skew.Parsing.parseArgumentList = function(context, parent, stop) {
     var isFirst = true;
+    var hasNamedArguments = false;
     context.skipWhitespace();
 
     while (!context.eat(stop)) {
@@ -11245,6 +11256,11 @@
         }
 
         value = Skew.Node.createPair(value, after).withRange(context.spanSince(value.range));
+        hasNamedArguments = true;
+      }
+
+      else if (hasNamedArguments) {
+        context.log.syntaxErrorUnnamedArgument(value.range);
       }
 
       parent.appendChild(value);

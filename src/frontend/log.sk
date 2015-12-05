@@ -123,6 +123,10 @@ namespace Skew {
     def syntaxErrorOptionalArgument(range Range) {
       error(range, "Optional arguments aren't supported yet")
     }
+
+    def syntaxErrorUnnamedArgument(range Range) {
+      error(range, "Unnamed arguments cannot come after named arguments")
+    }
   }
 
   namespace Log {

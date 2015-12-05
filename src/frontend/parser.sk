@@ -685,6 +685,8 @@ namespace Skew.Parsing {
 
   def parseFunctionArguments(context ParserContext, symbol FunctionSymbol) bool {
     var usingTypes = false
+    var hasNamedArguments = false
+
     while !context.eat(.RIGHT_PARENTHESIS) {
       if !symbol.arguments.isEmpty && !context.expect(.COMMA) {
         return false
@@ -703,6 +705,9 @@ namespace Skew.Parsing {
       # Parse named flag
       if symbol.kind != .FUNCTION_LOCAL && context.eat(.COLON) {
         arg.flags |= .IS_NAMED
+        hasNamedArguments = true
+      } else if hasNamedArguments {
+        context.log.syntaxErrorUnnamedArgument(range)
       }
 
       # Parse argument type
@@ -720,6 +725,7 @@ namespace Skew.Parsing {
 
       symbol.arguments.append(arg)
     }
+
     return true
   }
 
@@ -1208,6 +1214,8 @@ namespace Skew.Parsing {
 
   def parseArgumentList(context ParserContext, parent Node, stop TokenKind) {
     var isFirst = true
+    var hasNamedArguments = false
+
     context.skipWhitespace
     while !context.eat(stop) {
       if !isFirst && !context.expect(.COMMA) {
@@ -1215,6 +1223,7 @@ namespace Skew.Parsing {
         break
       }
       var value = expressionParser.parse(context, .LOWEST)
+
       if value.kind == .NAME && context.eat(.COLON) {
         var after = expressionParser.parse(context, .LOWEST)
         if after == null {
@@ -1222,7 +1231,11 @@ namespace Skew.Parsing {
           break
         }
         value = Node.createPair(value, after).withRange(context.spanSince(value.range))
+        hasNamedArguments = true
+      } else if hasNamedArguments {
+        context.log.syntaxErrorUnnamedArgument(value.range)
       }
+
       parent.appendChild(value)
       context.skipWhitespace
       isFirst = false
