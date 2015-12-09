@@ -9,7 +9,7 @@ namespace Skew {
     }
 
     over run(context PassContext) {
-      LambdaLifter.new(context.global).visitObject(context.global)
+      LambdaLifter.new(context.global, context.cache).visitObject(context.global)
     }
   }
 
@@ -57,9 +57,11 @@ namespace Skew {
       }
     }
 
-    var global ObjectSymbol
-    var stack List<CaptureScope> = []
-    var enclosingFunction FunctionSymbol = null
+    const _global ObjectSymbol
+    const _cache TypeCache
+    const _stack List<CaptureScope> = []
+    const _interfaces IntMap<ObjectSymbol> = {}
+    var _enclosingFunction FunctionSymbol = null
 
     def visitObject(symbol ObjectSymbol) {
       for object in symbol.objects {
@@ -67,107 +69,198 @@ namespace Skew {
       }
 
       for function in symbol.functions {
-        enclosingFunction = function
-        visitFunction(function)
-        enclosingFunction = null
+        _enclosingFunction = function
+        _visitFunction(function)
+        _enclosingFunction = null
       }
 
       for variable in symbol.variables {
-        visitVariable(variable)
+        _visitVariable(variable)
       }
     }
 
-    def visitFunction(symbol FunctionSymbol) {
+    def _visitFunction(symbol FunctionSymbol) {
       if symbol.block != null {
         var scope = CaptureScope.new(.FUNCTION, symbol.block, null)
         for argument in symbol.arguments {
           scope.define(argument, null)
         }
-        stack.append(scope)
-        visit(symbol.block)
-        processCaptureScope
+        _stack.append(scope)
+        _visit(symbol.block)
+        _processCaptureScope
       }
     }
 
-    def visitVariable(symbol VariableSymbol) {
+    def _visitVariable(symbol VariableSymbol) {
       if symbol.value != null {
-        visit(symbol.value)
+        _visit(symbol.value)
       }
     }
 
-    def visit(node Node) {
+    def _visit(node Node) {
       var kind = node.kind
       var symbol = node.symbol
-      var oldEnclosingFunction = enclosingFunction
+      var oldEnclosingFunction = _enclosingFunction
 
       if kind == .LAMBDA {
-        stack.append(CaptureScope.new(.LAMBDA, node, stack.isEmpty ? null : stack.last))
-        enclosingFunction = node.symbol.asFunctionSymbol
+        _stack.append(CaptureScope.new(.LAMBDA, node, _stack.isEmpty ? null : _stack.last))
+        _enclosingFunction = node.symbol.asFunctionSymbol
       }
 
       else if kind.isLoop {
-        stack.append(CaptureScope.new(.LOOP, node, stack.last))
+        _stack.append(CaptureScope.new(.LOOP, node, _stack.last))
       }
 
       else if kind == .VARIABLE {
-        stack.last.define(symbol.asVariableSymbol, node)
+        _stack.last.define(symbol.asVariableSymbol, node)
+      }
+
+      else if kind == .CATCH {
+        # TODO
       }
 
       else if symbol != null && (symbol.kind == .VARIABLE_ARGUMENT || symbol.kind == .VARIABLE_LOCAL) {
         assert(node.kind == .NAME)
-        stack.last.recordUse(symbol.asVariableSymbol, node, enclosingFunction)
+        _stack.last.recordUse(symbol.asVariableSymbol, node, _enclosingFunction)
       }
 
       for child = node.firstChild; child != null; child = child.nextSibling {
-        visit(child)
+        _visit(child)
       }
 
       if kind == .LAMBDA {
-        processCaptureScope
-        enclosingFunction = oldEnclosingFunction
+        _processCaptureScope
+        _enclosingFunction = oldEnclosingFunction
       } else if kind.isLoop {
-        processCaptureScope
+        _processCaptureScope
       }
     }
 
-    def createClass(name string) ObjectSymbol {
-      var object = ObjectSymbol.new(.OBJECT_CLASS, global.scope.generateName(name))
-      object.scope = ObjectScope.new(global.scope, object)
+    def createObject(kind SymbolKind, name string) ObjectSymbol {
+      var object = ObjectSymbol.new(kind, _global.scope.generateName(name))
+      object.scope = ObjectScope.new(_global.scope, object)
       object.resolvedType = Type.new(.SYMBOL, object)
-      object.parent = global
-      global.objects.append(object)
+      object.state = .INITIALIZED
+      object.parent = _global
+      _global.objects.append(object)
       return object
     }
 
     def createConstructor(object ObjectSymbol) FunctionSymbol {
-      var function = createFunction(object, .FUNCTION_CONSTRUCTOR, "new")
+      var function = _createFunction(object, .FUNCTION_CONSTRUCTOR, "new", .IMPLEMENTED)
       function.resolvedType.returnType = object.resolvedType
       return function
     }
 
-    def createFunction(object ObjectSymbol, kind SymbolKind, name string) FunctionSymbol {
+    enum Body {
+      ABSTRACT
+      IMPLEMENTED
+    }
+
+    def _createFunction(object ObjectSymbol, kind SymbolKind, name string, body Body) FunctionSymbol {
       var function = FunctionSymbol.new(kind, name)
       function.resolvedType = Type.new(.SYMBOL, function)
+      function.state = .INITIALIZED
       function.parent = object
-      function.block = Node.createBlock
-      function.scope = FunctionScope.new(object.scope, function)
-      function.this = VariableSymbol.new(.VARIABLE_LOCAL, "self")
-      function.this.resolvedType = object.resolvedType
+
+      if body == .IMPLEMENTED {
+        function.block = Node.createBlock
+        function.scope = FunctionScope.new(object.scope, function)
+        function.this = _createVariable(.VARIABLE_LOCAL, "self", object.resolvedType)
+      }
+
       object.functions.append(function)
       return function
     }
 
-    def processCaptureScope {
-      var scope = stack.takeLast
+    def _createVariable(kind SymbolKind, name string, type Type) VariableSymbol {
+      var variable = VariableSymbol.new(kind, name)
+      variable.resolvedType = type
+      variable.state = .INITIALIZED
+      return variable
+    }
+
+    def _createParameter(parent ObjectSymbol, name string) ParameterSymbol {
+      var parameter = ParameterSymbol.new(.PARAMETER_OBJECT, name)
+      parameter.resolvedType = Type.new(.SYMBOL, parameter)
+      parameter.state = .INITIALIZED
+      parent.parameters ?= []
+      parent.parameters.append(parameter)
+      return parameter
+    }
+
+    def _createInterface(count int, hasReturnType bool) ObjectSymbol {
+      var key = count | (hasReturnType ? 1 << 31 : 0)
+      var object = _interfaces.get(key, null)
+
+      if object == null {
+        object = createObject(.OBJECT_INTERFACE, "Fn\(hasReturnType ? "" : "Void")\(count)")
+        object.flags |= .IS_IMPORTED
+        _interfaces[key] = object
+
+        var function = _createFunction(object, .FUNCTION_INSTANCE, "run", .ABSTRACT)
+        function.flags |= .IS_IMPORTED
+        function.resolvedType.argumentTypes = []
+
+        if hasReturnType {
+          function.resolvedType.returnType = _createParameter(object, "R").resolvedType
+        }
+
+        for i in 0..count {
+          var parameter = _createParameter(object, "A\(i + 1)")
+          function.arguments.append(_createVariable(.VARIABLE_ARGUMENT, "a\(i + 1)", parameter.resolvedType))
+          function.resolvedType.argumentTypes.append(parameter.resolvedType)
+        }
+      }
+
+      return object
+    }
+
+    def _processCaptureScope {
+      var scope = _stack.takeLast
 
       # Convert lambdas to function objects
       if scope.kind == .LAMBDA {
-        var lambda = createClass("Lambda")
+        var function = scope.node.symbol.asFunctionSymbol
+        var returnType = function.resolvedType.returnType
+
+        # Derive the name from the scope
+        var name = ""
+        for s = function.scope; s != null; s = s.parent {
+          if s.kind == .FUNCTION && s.asFunctionScope.symbol.kind != .FUNCTION_LOCAL {
+            name = "_" + s.asFunctionScope.symbol.name + name
+          } else if s.kind == .OBJECT && s.asObjectScope.symbol.kind != .OBJECT_GLOBAL {
+            name = "_" + s.asObjectScope.symbol.name + name
+          }
+        }
+
+        var lambda = createObject(.OBJECT_CLASS, "Fn" + name)
         var lambdaConstructor = createConstructor(lambda)
-        var lambdaRun = createFunction(lambda, .FUNCTION_INSTANCE, "run")
+        var lambdaRun = _createFunction(lambda, .FUNCTION_INSTANCE, "run", .IMPLEMENTED)
         var lambdaCall = Node.createSymbolCall(lambdaConstructor)
-        lambdaRun.block = scope.node.symbol.asFunctionSymbol.block.remove
+
+        # Implement the lambda interface with the right type parameters
+        var interface = _createInterface(function.arguments.count, returnType != null)
+        var interfaceRun = interface.functions.first
+        var interfaceType = interface.resolvedType
+        var substitutions List<Type> = []
+        if returnType != null {
+          substitutions.append(returnType)
+        }
+        substitutions.append(function.resolvedType.argumentTypes)
+        if !substitutions.isEmpty {
+          interfaceType = _cache.substitute(interfaceType, _cache.createEnvironment(interface.parameters, substitutions))
+        }
+
+        lambda.extends = Node.createType(interfaceType)
+        lambda.interfaceTypes = [interfaceType]
+        lambdaRun.arguments = function.arguments
+        lambdaRun.resolvedType.argumentTypes = function.resolvedType.argumentTypes
+        lambdaRun.resolvedType.returnType = returnType
+        lambdaRun.block = function.block.remove
         lambdaRun.flags |= .IS_EXPORTED # TODO: This needs to be called
+        interfaceRun.implementations ?= []
+        interfaceRun.implementations.append(lambdaRun)
         scope.node.become(lambdaCall)
       }
 
@@ -177,9 +270,11 @@ namespace Skew {
       }
 
       # Create a new object to hold the memory for the environment
-      var environment = createClass("Environment")
+      var environment = createObject(.OBJECT_CLASS, "Env")
       var constructor = createConstructor(environment)
+      scope.environment.type = Node.createType(environment.resolvedType)
       scope.environment.resolvedType = environment.resolvedType
+      scope.environment.state = .INITIALIZED
 
       # All captured arguments will be appended as arguments to the constructor call
       var constructorCall = Node.createSymbolCall(constructor)
@@ -191,15 +286,14 @@ namespace Skew {
         }
 
         var symbol = info.symbol
-        var member = VariableSymbol.new(.VARIABLE_INSTANCE, symbol.name)
+        var member = _createVariable(.VARIABLE_INSTANCE, symbol.name, symbol.resolvedType)
         member.parent = environment
-        member.resolvedType = symbol.resolvedType
         environment.variables.append(member)
 
-        # Change the definition into an assignment
+        # Change the definition into an assignment (TODO: HANDLE FOR LOOPS)
         var assignment = Node.createExpression(Node.createBinary(.ASSIGN,
           Node.createMemberReference(Node.createSymbolReference(scope.environment), member),
-          symbol.value != null ? symbol.value.remove : Node.createSymbolReference(symbol)))
+          symbol.value != null ? symbol.value.remove : Node.createSymbolReference(symbol)).withType(member.resolvedType))
 
         # Local variables can change into assignments
         var definition = info.definition
@@ -214,14 +308,13 @@ namespace Skew {
           assert(symbol.kind == .VARIABLE_ARGUMENT)
 
           # Add an argument to the constructor
-          var argument = VariableSymbol.new(.VARIABLE_ARGUMENT, symbol.name)
-          argument.resolvedType = symbol.resolvedType
+          var argument = _createVariable(.VARIABLE_ARGUMENT, symbol.name, symbol.resolvedType)
           constructor.arguments.append(argument)
 
           # Copy the value from the argument to the member
           constructor.block.appendChild(Node.createExpression(Node.createBinary(.ASSIGN,
             Node.createMemberReference(Node.createSymbolReference(constructor.this), member),
-            Node.createSymbolReference(argument))))
+            Node.createSymbolReference(argument)).withType(member.resolvedType)))
 
           # Pass the initial value of the captured variable to the constructor
           constructorCall.appendChild(Node.createSymbolReference(symbol))
@@ -238,7 +331,7 @@ namespace Skew {
       switch scope.kind {
         case .FUNCTION { scope.node.prependChild(initializer) }
         case .LAMBDA { scope.node.lambdaBlock.appendChild(initializer) }
-        default { scope.node.parent.insertChildBefore(scope.node.parent, initializer) }
+        default { scope.node.parent.insertChildBefore(scope.node, initializer) }
       }
     }
   }

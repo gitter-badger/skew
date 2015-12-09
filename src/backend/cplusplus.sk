@@ -776,15 +776,6 @@ namespace Skew {
           }
         }
 
-        case .LAMBDA {
-          var lambda = symbol.asFunctionSymbol
-          _emit("[=]")
-          _emitArgumentList(lambda)
-          _emit(" -> ")
-          _emitType(lambda.resolvedType.returnType, .NORMAL)
-          _emitBlock(lambda.block)
-        }
-
         case .INITIALIZER_LIST, .INITIALIZER_MAP {
           _emit("new ")
           _emitType(node.resolvedType, .BARE)
@@ -866,26 +857,27 @@ namespace Skew {
     }
 
     def _emitType(type Type, mode CppEmitType) {
-      if type == null {
-        _emit(mode == .DECLARATION ? "void " : "void")
-      }
-
-      else if type == .DYNAMIC {
-        _emit("void *")
+      if type == null || type == .DYNAMIC {
+        _emit("void")
       }
 
       else if type.kind == .LAMBDA {
-        _includeNames["<functional>"] = 0
-        _emit("std::function<")
-        _emitType(type.returnType, .DECLARATION)
-        _emit("(")
-        for i in 0..type.argumentTypes.count {
-          if i != 0 {
-            _emit(", ")
+        var hasReturnType = type.returnType != null
+        var argumentCount = type.argumentTypes.count
+        _emit((hasReturnType ? "Fn" : "FnVoid") + "\(argumentCount)")
+        if hasReturnType || argumentCount != 0 {
+          _emit("<")
+          if hasReturnType {
+            _emitType(type.returnType, .NORMAL)
           }
-          _emitType(type.argumentTypes[i], .NORMAL)
+          for i in 0..argumentCount {
+            if i != 0 || hasReturnType {
+              _emit(", ")
+            }
+            _emitType(type.argumentTypes[i], .NORMAL)
+          }
+          _emit(">")
         }
-        _emit(mode == .DECLARATION ? ")> " : ")>")
       }
 
       else {
@@ -903,12 +895,12 @@ namespace Skew {
           }
           _emit(">")
         }
+      }
 
-        if _isReferenceType(type) && mode != .BARE {
-          _emit(" *")
-        } else if mode == .DECLARATION {
-          _emit(" ")
-        }
+      if type != null && _isReferenceType(type) && mode != .BARE {
+        _emit(" *")
+      } else if mode == .DECLARATION {
+        _emit(" ")
       }
     }
 
